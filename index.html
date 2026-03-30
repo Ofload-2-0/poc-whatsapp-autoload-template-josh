@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ofload — Load Notification POC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c0f; --surface: #111318; --surface2: #181c23; --border: #22272f;
+    --accent: #F05637; --accent-dim: rgba(240,86,55,0.12);
+    --text: #e8eaed; --text-muted: #6b7280; --text-dim: #9ca3af;
+    --green: #22c55e; --green-dim: rgba(34,197,94,0.1);
+    --font-mono: 'IBM Plex Mono', monospace; --font-sans: 'IBM Plex Sans', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font-sans); min-height: 100vh; display: flex; flex-direction: column; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-icon { width: 28px; height: 28px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 600; font-size: 12px; color: white; }
+  .logo-text { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
+  .header-tag { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); background: var(--surface2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .app { display: grid; grid-template-columns: 440px 1fr; flex: 1; }
+  .panel-left { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; max-height: calc(100vh - 57px); }
+  .panel-section { padding: 18px 20px; border-bottom: 1px solid var(--border); }
+  .section-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+
+  .search-row { display: flex; gap: 8px; }
+  .search-input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 9px 12px; font-family: var(--font-mono); font-size: 13px; color: var(--text); outline: none; transition: border-color 0.15s; }
+  .search-input::placeholder { color: var(--text-muted); }
+  .search-input:focus { border-color: var(--accent); }
+
+  .btn { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 9px 16px; font-family: var(--font-mono); font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.15s, transform 0.1s; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { opacity: 0.88; } .btn:active { transform: scale(0.97); } .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); opacity: 1; }
+  .btn-success { background: var(--green); }
+
+  .quick-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .quick-chip { font-family: var(--font-mono); font-size: 10px; padding: 3px 8px; border-radius: 4px; background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; transition: all 0.1s; }
+  .quick-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+  .error-msg { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 6px; padding: 8px 12px; font-family: var(--font-mono); font-size: 11px; color: #f87171; display: none; margin-top: 8px; }
+  .error-msg.visible { display: block; }
+
+  .order-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; animation: slideIn 0.2s ease; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .order-header { background: var(--accent-dim); border-bottom: 1px solid var(--border); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .order-id-lbl { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--accent); }
+  .order-status { font-family: var(--font-mono); font-size: 10px; padding: 2px 8px; border-radius: 3px; background: var(--green-dim); color: var(--green); border: 1px solid rgba(34,197,94,0.2); text-transform: uppercase; }
+  .order-fields { padding: 12px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field-item { display: flex; flex-direction: column; gap: 3px; }
+  .field-item.full { grid-column: 1/-1; }
+  .field-lbl { font-family: var(--font-mono); font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .field-val { font-size: 12px; font-weight: 500; color: var(--text); line-height: 1.3; }
+  .field-val.accent { color: var(--accent); } .field-val.warn { color: #fbbf24; }
+
+  .confirm-bar { background: var(--accent-dim); border: 1px solid rgba(240,86,55,0.25); border-radius: 6px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; animation: slideIn 0.2s ease; }
+  .confirm-text { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+  .confirm-text strong { color: var(--text); }
+
+  .recipient-row { display: flex; align-items: center; gap: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; }
+  .rec-avatar { width: 34px; height: 34px; background: var(--accent-dim); border: 1px solid rgba(240,86,55,0.3); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
+  .rec-name { font-size: 13px; font-weight: 500; }
+  .rec-phone { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .wa-badge { font-family: var(--font-mono); font-size: 9px; background: var(--green-dim); color: var(--green); border: 1px solid rgba(34,197,94,0.2); padding: 2px 6px; border-radius: 3px; text-transform: uppercase; }
+
+  .empty-state { padding: 40px 20px; text-align: center; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; line-height: 1.8; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .empty-icon { font-size: 30px; opacity: 0.35; margin-bottom: 4px; }
+
+  .panel-right { display: flex; flex-direction: column; }
+  .preview-header { padding: 14px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--surface); }
+  .preview-title { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+  .preview-body { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px; overflow-y: auto; }
+
+  .phone-mockup { width: 310px; background: #0d0d0d; border-radius: 36px; border: 2px solid #252525; overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04); flex-shrink: 0; }
+  .phone-notch { background: #000; height: 26px; display: flex; align-items: center; justify-content: center; }
+  .notch-pill { width: 70px; height: 5px; background: #1a1a1a; border-radius: 3px; }
+  .phone-wa-bar { background: #1a2e1f; padding: 8px 14px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .wa-back { color: #25d366; font-size: 18px; }
+  .wa-av { width: 30px; height: 30px; background: #25d366; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: white; flex-shrink: 0; }
+  .wa-cname { font-size: 12px; font-weight: 600; color: #e8eaed; }
+  .wa-cstatus { font-size: 10px; color: #4b5563; }
+  .phone-chat { background: #0a1f13; padding: 12px 10px 16px; display: flex; flex-direction: column; gap: 6px; min-height: 360px; }
+  .wa-bubble { background: #1a3a24; border-radius: 12px 12px 12px 2px; padding: 10px 12px; max-width: 90%; align-self: flex-start; border: 1px solid rgba(255,255,255,0.05); animation: bubbleIn 0.3s cubic-bezier(0.34,1.56,0.64,1); }
+  @keyframes bubbleIn { from { opacity:0; transform:scale(0.92) translateY(4px); } to { opacity:1; transform:scale(1) translateY(0); } }
+  .wa-msg { font-size: 11.5px; line-height: 1.6; color: #e8eaed; font-family: var(--font-sans); white-space: pre-wrap; word-break: break-word; }
+  .wa-time { font-size: 9px; color: #374151; text-align: right; margin-top: 4px; font-family: var(--font-mono); }
+
+  .actions-footer { padding: 14px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center; background: var(--surface); }
+  .footer-meta { flex: 1; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); line-height: 1.6; text-align: right; }
+  .footer-meta span { color: var(--text); }
+
+  .sent-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; animation: fadeUp 0.4s ease; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+  .sent-icon { width: 60px; height: 60px; background: var(--green-dim); border: 1px solid rgba(34,197,94,0.3); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 26px; }
+  .sent-title { font-family: var(--font-mono); font-size: 15px; font-weight: 600; color: var(--green); }
+  .sent-sub { font-size: 13px; color: var(--text-muted); max-width: 280px; line-height: 1.6; }
+  .sent-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); background: var(--surface2); border: 1px solid var(--border); padding: 6px 14px; border-radius: 4px; }
+
+  .spinner { width: 13px; height: 13px; border: 2px solid rgba(255,255,255,0.25); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-icon">OF</div>
+    <span class="logo-text">Ofload</span>
+  </div>
+  <span class="header-tag">WhatsApp Load Notifier — POC</span>
+</header>
+
+<div class="app">
+  <div class="panel-left">
+    <div class="panel-section">
+      <div class="section-label">Search Load ID</div>
+      <div class="search-row">
+        <input class="search-input" id="searchInput" type="text" placeholder="e.g. LD-10042" maxlength="20" />
+        <button class="btn" id="searchBtn" onclick="handleSearch()">Search</button>
+      </div>
+      <div class="quick-picks" id="quickPicks"></div>
+      <div class="error-msg" id="errorMsg">No load found. Try one of the IDs above.</div>
+    </div>
+
+    <div id="orderSection" style="display:none">
+      <div class="panel-section">
+        <div class="section-label">Load Details</div>
+        <div class="order-card">
+          <div class="order-header">
+            <span class="order-id-lbl" id="cardId"></span>
+            <span class="order-status">Allocated</span>
+          </div>
+          <div class="order-fields" id="orderFields"></div>
+        </div>
+        <div class="confirm-bar">
+          <div class="confirm-text">Correct load? <strong>Load the WhatsApp template.</strong></div>
+          <button class="btn" style="padding:7px 14px;font-size:11px" onclick="loadTemplate()">Load Template →</button>
+        </div>
+      </div>
+      <div class="panel-section">
+        <div class="section-label">Recipient</div>
+        <div class="recipient-row">
+          <div class="rec-avatar" id="recAvatar"></div>
+          <div style="flex:1">
+            <div class="rec-name" id="recName"></div>
+            <div class="rec-phone" id="recPhone"></div>
+          </div>
+          <span class="wa-badge">WhatsApp</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">🚛</div>
+      <div>Enter a load ID to begin</div>
+      <div style="opacity:0.5;font-size:10px;margin-top:2px">Or tap any ID above</div>
+    </div>
+  </div>
+
+  <div class="panel-right">
+    <div class="preview-header">
+      <span class="preview-title">WhatsApp Preview</span>
+      <span id="tplTag" style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:none">template: load_allocation_v1</span>
+    </div>
+    <div class="preview-body" id="previewBody">
+      <div style="text-align:center;color:var(--text-muted);font-family:var(--font-mono);font-size:12px;line-height:1.8;opacity:0.4">
+        <div style="font-size:36px;margin-bottom:12px">📱</div>
+        Search for a load to<br>preview the message
+      </div>
+    </div>
+    <div class="actions-footer" id="actionsFooter" style="display:none">
+      <button class="btn btn-ghost" onclick="resetAll()">← Reset</button>
+      <div class="footer-meta">To: <span id="footerName"></span><br><span>via WhatsApp · Ofload channel</span></div>
+      <button class="btn btn-success" id="sendBtn" onclick="handleSend()">Send Message</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const ORDERS = {
+  'LD-10042': { carrier:{name:'James Hartley',phone:'+61 412 883 201',initials:'JH'}, pickup_address:'14 Freight Way, Laverton VIC 3028', pickup_time:'Mon 7 Apr · 06:00 AM', dropoff_address:'88 Commerce Dr, Dandenong VIC 3175', dropoff_time:'Mon 7 Apr · 11:00 AM', cargo:'Steel coils (12t)', truck_type:'Semi-trailer (B-Double)', handling:'Crane offload required', restraints:'Chain & binder ×4', dg:'None', rate:'$1,240.00 (inc. GST)' },
+  'LD-20187': { carrier:{name:'Priya Nair',phone:'+61 438 552 770',initials:'PN'}, pickup_address:'3 Industrial Ave, Wetherill Park NSW 2164', pickup_time:'Tue 8 Apr · 07:30 AM', dropoff_address:'200 Boundary Rd, Coopers Plains QLD 4108', dropoff_time:'Wed 9 Apr · 09:00 AM', cargo:'Palletised food goods (6t)', truck_type:'Refrigerated pantec', handling:'Tailgate required', restraints:'Load bars ×6', dg:'None', rate:'$2,880.00 (inc. GST)' },
+  'LD-33901': { carrier:{name:'Marcus Webb',phone:'+61 401 234 567',initials:'MW'}, pickup_address:'7 Port Access Rd, Port Adelaide SA 5015', pickup_time:'Wed 9 Apr · 05:00 AM', dropoff_address:'44 Logistics Blvd, Pooraka SA 5095', dropoff_time:'Wed 9 Apr · 10:30 AM', cargo:'Bulk timber (18t)', truck_type:'Flat-bed semi', handling:'Forklift at both ends', restraints:'Straps ×8 + dunnage', dg:'Class 3 — Flammable liquid', rate:'$960.00 (inc. GST)' },
+  'LD-44512': { carrier:{name:'Sandra Kowalski',phone:'+61 477 341 892',initials:'SK'}, pickup_address:'99 Hume Hwy, Campbellfield VIC 3061', pickup_time:'Thu 10 Apr · 08:00 AM', dropoff_address:'15 Pacific Hwy, Coffs Harbour NSW 2450', dropoff_time:'Fri 11 Apr · 03:00 PM', cargo:'Automotive parts — palletised (8t)', truck_type:'Curtainsider semi', handling:'Hi-lo at pickup, manual at delivery', restraints:'Straps ×6', dg:'None', rate:'$3,450.00 (inc. GST)' },
+  'LD-55780': { carrier:{name:'Darren Tully',phone:'+61 455 900 123',initials:'DT'}, pickup_address:'22 Export Dr, Pinkenba QLD 4008', pickup_time:'Fri 11 Apr · 04:30 AM', dropoff_address:'101 Anzac Ave, Toowoomba QLD 4350', dropoff_time:'Fri 11 Apr · 09:00 AM', cargo:'Bulk grain — loose (24t)', truck_type:'Tipper B-Double', handling:'Tip at delivery — concrete pad', restraints:'N/A (bulk)', dg:'None', rate:'$1,620.00 (inc. GST)' },
+  'LD-61033': { carrier:{name:'Anh Nguyen',phone:'+61 421 667 445',initials:'AN'}, pickup_address:'5 Stirling St, Thebarton SA 5031', pickup_time:'Mon 7 Apr · 09:00 AM', dropoff_address:'78 Grand Jct Rd, Rosewater SA 5013', dropoff_time:'Mon 7 Apr · 12:30 PM', cargo:'Bottled beverages — palletised (4t)', truck_type:'Rigid truck (12t)', handling:'Tailgate + pallet jack', restraints:'Straps ×4', dg:'None', rate:'$580.00 (inc. GST)' },
+  'LD-72294': { carrier:{name:'Brett Calloway',phone:'+61 409 112 334',initials:'BC'}, pickup_address:'300 Fitzgerald Rd, Laverton North VIC 3026', pickup_time:'Tue 8 Apr · 05:00 AM', dropoff_address:'12 Freight Terminal Dr, Altona VIC 3018', dropoff_time:'Tue 8 Apr · 07:30 AM', cargo:'Chemical drums — IBC (9t)', truck_type:'Flat-bed rigid', handling:'Pump-truck at delivery', restraints:'Chain & binder ×6', dg:'Class 8 — Corrosive substance', rate:'$740.00 (inc. GST)' },
+  'LD-83476': { carrier:{name:'Fatima Al-Rashid',phone:'+61 433 210 987',initials:'FA'}, pickup_address:'18 Mulgoa Rd, Penrith NSW 2750', pickup_time:'Wed 9 Apr · 06:00 AM', dropoff_address:'55 Doody St, Alexandria NSW 2015', dropoff_time:'Wed 9 Apr · 10:00 AM', cargo:'Construction materials — mixed (15t)', truck_type:'Semi-trailer (single)', handling:'Crane at delivery site', restraints:'Straps ×10 + corner boards', dg:'None', rate:'$1,890.00 (inc. GST)' },
+  'LD-90021': { carrier:{name:'Colin Draper',phone:'+61 416 788 002',initials:'CD'}, pickup_address:'88 Station Rd, Yennora NSW 2161', pickup_time:'Thu 10 Apr · 07:00 AM', dropoff_address:'34 Northbourne Ave, Canberra ACT 2601', dropoff_time:'Thu 10 Apr · 01:00 PM', cargo:'Office furniture — flat-pack (3t)', truck_type:'Pantec rigid (8t)', handling:'Manual unload — lift assist provided', restraints:'Load bars ×4', dg:'None', rate:'$920.00 (inc. GST)' },
+  'LD-94850': { carrier:{name:'Tom Whitfield',phone:'+61 448 330 156',initials:'TW'}, pickup_address:'4 Quarry Rd, Emu Plains NSW 2750', pickup_time:'Fri 11 Apr · 05:30 AM', dropoff_address:'9 Industrial Loop, Bathurst NSW 2795', dropoff_time:'Fri 11 Apr · 08:00 AM', cargo:'Crushed rock — bulk (28t)', truck_type:'Tipper semi', handling:'Direct tip — gravel pit', restraints:'N/A (bulk)', dg:'None', rate:'$810.00 (inc. GST)' },
+  'LD-10539': { carrier:{name:'Linh Tran',phone:'+61 425 901 743',initials:'LT'}, pickup_address:'60 Southgate Ave, Cannon Hill QLD 4170', pickup_time:'Mon 7 Apr · 10:00 AM', dropoff_address:'22 Trade Coast Dr, Brisbane Airport QLD 4008', dropoff_time:'Mon 7 Apr · 12:00 PM', cargo:'Air freight — general cargo (2t)', truck_type:'Van (light rigid)', handling:'Manual — no equipment needed', restraints:'Nets ×2', dg:'None', rate:'$390.00 (inc. GST)' },
+  'LD-20655': { carrier:{name:'Wayne Sutton',phone:'+61 402 556 317',initials:'WS'}, pickup_address:"77 O'Riordan St, Alexandria NSW 2015", pickup_time:'Tue 8 Apr · 06:30 AM', dropoff_address:'3 Princes Hwy, Unanderra NSW 2526', dropoff_time:'Tue 8 Apr · 10:30 AM', cargo:'Printing machinery — single item (6t)', truck_type:'Low-loader semi', handling:'Rigger on site at both ends', restraints:'Chain & binder ×8', dg:'None', rate:'$2,100.00 (inc. GST)' },
+  'LD-31847': { carrier:{name:'Rosa Ferrante',phone:'+61 413 007 224',initials:'RF'}, pickup_address:'1 Princes Hwy, Dandenong VIC 3175', pickup_time:'Mon 7 Apr · 07:00 AM', dropoff_address:'500 Swanston St, Melbourne VIC 3000', dropoff_time:'Mon 7 Apr · 09:30 AM', cargo:'Medical supplies — temperature sensitive (1.5t)', truck_type:'Refrigerated van', handling:'No equipment — hand unload only', restraints:'Nets ×2', dg:'Class 6.2 — Biological substance', rate:'$480.00 (inc. GST)' },
+  'LD-47203': { carrier:{name:'Nathan Birch',phone:'+61 437 654 321',initials:'NB'}, pickup_address:'12 Gateway Blvd, Truganina VIC 3029', pickup_time:'Wed 9 Apr · 04:00 AM', dropoff_address:'8 Spencer St, Adelaide SA 5000', dropoff_time:'Thu 10 Apr · 08:00 AM', cargo:'General freight — mixed SKUs (10t)', truck_type:'Curtainsider B-Double', handling:'Hi-lo at both ends', restraints:'Straps ×12', dg:'None', rate:'$4,200.00 (inc. GST)' },
+  'LD-58912': { carrier:{name:'Deborah Castillo',phone:'+61 419 883 560',initials:'DC'}, pickup_address:'44 Miles Platting Rd, Eight Mile Plains QLD 4113', pickup_time:'Thu 10 Apr · 06:00 AM', dropoff_address:'27 Varsity Pde, Varsity Lakes QLD 4227', dropoff_time:'Thu 10 Apr · 09:00 AM', cargo:'Retail store fit-out — palletised (5t)', truck_type:'Pantec semi', handling:'Tailgate + pump truck', restraints:'Straps ×6', dg:'None', rate:'$670.00 (inc. GST)' },
+};
+
+const IDS = Object.keys(ORDERS);
+let current = null;
+
+// Quick chips
+document.getElementById('quickPicks').innerHTML = IDS.map(id =>
+  `<span class="quick-chip" onclick="quickPick('${id}')">${id}</span>`
+).join('');
+
+function quickPick(id) {
+  document.getElementById('searchInput').value = id;
+  handleSearch();
+}
+
+function $(id) { return document.getElementById(id); }
+
+function handleSearch() {
+  const val = $('searchInput').value.trim().toUpperCase();
+  $('errorMsg').classList.remove('visible');
+  if (!val) return;
+  const btn = $('searchBtn');
+  btn.innerHTML = '<div class="spinner"></div>';
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.innerHTML = 'Search';
+    btn.disabled = false;
+    const order = ORDERS[val];
+    if (!order) {
+      $('errorMsg').classList.add('visible');
+      $('orderSection').style.display = 'none';
+      $('emptyState').style.display = 'flex';
+      $('actionsFooter').style.display = 'none';
+      showPreviewEmpty(false);
+      return;
+    }
+    current = { ...order, id: val };
+    renderOrder();
+  }, 400);
+}
+
+function renderOrder() {
+  $('emptyState').style.display = 'none';
+  $('orderSection').style.display = 'block';
+  $('cardId').textContent = current.id;
+  const isDG = current.dg !== 'None';
+  $('orderFields').innerHTML = [
+    { l:'Pick-up Address', v:current.pickup_address, full:true },
+    { l:'Pick-up Time', v:current.pickup_time },
+    { l:'Drop-off Address', v:current.dropoff_address, full:true },
+    { l:'Drop-off Time', v:current.dropoff_time },
+    { l:'Cargo', v:current.cargo, full:true },
+    { l:'Truck Type', v:current.truck_type, full:true },
+    { l:'Handling', v:current.handling },
+    { l:'Restraints', v:current.restraints },
+    { l:'DG', v:current.dg, cls: isDG ? 'warn' : '' },
+    { l:'Total Carrier Rate', v:current.rate, cls:'accent' },
+  ].map(f=>`<div class="field-item${f.full?' full':''}"><span class="field-lbl">${f.l}</span><span class="field-val ${f.cls||''}">${f.v}</span></div>`).join('');
+  $('recAvatar').textContent = current.carrier.initials;
+  $('recName').textContent = current.carrier.name;
+  $('recPhone').textContent = current.carrier.phone;
+  $('tplTag').style.display = 'none';
+  $('actionsFooter').style.display = 'none';
+  showPreviewEmpty(true);
+}
+
+function showPreviewEmpty(hasOrder) {
+  $('previewBody').innerHTML = `<div style="text-align:center;color:var(--text-muted);font-family:var(--font-mono);font-size:12px;line-height:1.8;opacity:0.4"><div style="font-size:36px;margin-bottom:12px">📱</div>${hasOrder ? 'Confirm the load,<br>then click Load Template' : 'Search for a load to<br>preview the message'}</div>`;
+}
+
+function loadTemplate() {
+  $('tplTag').style.display = 'inline';
+  $('actionsFooter').style.display = 'flex';
+  $('footerName').textContent = current.carrier.name;
+  const o = current;
+  const time = new Date().toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
+  const raw = `A new load has been allocated to you. Please review the details and confirm your availability below:\n\n📍*Pick-up:*\n${o.pickup_address}\n${o.pickup_time}\n📍*Drop-off:*\n${o.dropoff_address}\n${o.dropoff_time}\n*Cargo:* ${o.cargo}\n*Truck type:* ${o.truck_type}\n*Handling:* ${o.handling}\n*Restraints:* ${o.restraints}\n*DG:* ${o.dg}\n*Total Carrier Rate:*\n${o.rate}\n_Important: By clicking 'Accept Load' below, you confirm you have the capacity to complete this job safely and agree to the CoR obligations and Ofload Terms & Conditions._`;
+  const html = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*([^*\n]+)\*/g,'<strong>$1</strong>').replace(/_([^_\n]+)_/g,'<em style="color:#9ca3af;font-size:11px">$1</em>');
+  $('previewBody').innerHTML = `
+    <div class="phone-mockup">
+      <div class="phone-notch"><div class="notch-pill"></div></div>
+      <div class="phone-wa-bar">
+        <span class="wa-back">‹</span>
+        <div class="wa-av">${o.carrier.initials}</div>
+        <div><div class="wa-cname">${o.carrier.name}</div><div class="wa-cstatus">online</div></div>
+      </div>
+      <div class="phone-chat">
+        <div class="wa-bubble">
+          <div class="wa-msg">${html}</div>
+          <div class="wa-time">${time} ✓</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function handleSend() {
+  const btn = $('sendBtn');
+  btn.innerHTML = '<div class="spinner"></div>';
+  btn.disabled = true;
+  setTimeout(() => {
+    const o = current;
+    const time = new Date().toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
+    $('previewBody').innerHTML = `
+      <div class="sent-wrap">
+        <div class="sent-icon">✓</div>
+        <div class="sent-title">Message Sent</div>
+        <div class="sent-sub">Load notification delivered to <strong>${o.carrier.name}</strong> (${o.carrier.phone}) via WhatsApp.</div>
+        <div class="sent-meta">${o.id} · ${time} · template: load_allocation_v1</div>
+        <button class="btn btn-ghost" style="margin-top:4px" onclick="resetAll()">Send another →</button>
+      </div>`;
+    $('actionsFooter').style.display = 'none';
+  }, 1000);
+}
+
+function resetAll() {
+  current = null;
+  $('searchInput').value = '';
+  $('errorMsg').classList.remove('visible');
+  $('orderSection').style.display = 'none';
+  $('emptyState').style.display = 'flex';
+  $('actionsFooter').style.display = 'none';
+  $('tplTag').style.display = 'none';
+  showPreviewEmpty(false);
+}
+
+$('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleSearch(); });
+</script>
+</body>
+</html>
