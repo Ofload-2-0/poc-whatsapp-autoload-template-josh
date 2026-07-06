@@ -1,0 +1,12 @@
+stackName: dev-ofload-db
+environment: dev
+type: development
+cloud: aws
+stackType: cloudformation
+region: ap-southeast-2
+account: "958254112077"
+
+stackState: provisioned #new|created|provisioned|deleted
+
+# PRs raised not require approval and are automatically applied
+requiresPRApproval: false

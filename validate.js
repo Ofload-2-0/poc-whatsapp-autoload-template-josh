@@ -1,0 +1,193 @@
+/**
+ * validate.js — READ-ONLY: run the REAL phone waterfall (phone.js) against a
+ * carrier's real dev data. Prints which number it would pick, assigned vs not.
+ * Sends nothing, writes nothing. Expects DATABASE_URL (set by validate-carrier.sh).
+ *
+ *   node validate.js "THE FREIGHT COMP PTY LTD"
+ */
+const { Pool } = require('pg');
+const { resolvePhone, isValidAuMobile } = require('./phone');
+
+const name = process.argv[2] || 'THE FREIGHT COMP PTY LTD';
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2, connectionTimeoutMillis: 6000 });
+
+const show = c => c ? `${c.phone} (${c.reason}${c.name ? ', ' + c.name : ''})` : 'NOBODY REACHABLE';
+
+(async () => {
+  // --assigned : find any load already assigned to a team member (proves Scenario A, zero setup)
+  if (name.trim() === '--assigned') {
+    const { rows } = await pool.query(
+      `SELECT mm.id AS master_manifest_id, mm.carrier_id, co.company_name,
+              (t.first_name||' '||t.last_name) AS name, t.position, t.phone
+         FROM master_manifest mm
+         JOIN team t     ON t.id = mm.team_id
+         JOIN carrier c  ON c.id = mm.carrier_id
+         JOIN company co ON co.id = c.company_id
+        WHERE mm.team_id IS NOT NULL AND mm.deleted_at IS NULL AND NULLIF(t.phone,'') IS NOT NULL
+        LIMIT 5`);
+    if (!rows.length) { console.log('No already-assigned loads with a contactable team member found in this DB.'); await pool.end(); return; }
+    console.log(`Found ${rows.length} already-assigned load(s):`);
+    for (const r of rows) {
+      const { rows: contacts } = await pool.query(
+        `SELECT (first_name||' '||last_name) AS name, position, phone, is_primary AS "isPrimary"
+           FROM team WHERE company_id = (SELECT company_id FROM carrier WHERE id=$1) AND deleted_at IS NULL`, [r.carrier_id]);
+      const chosen = resolvePhone({ assigned: { name: r.name, position: r.position, phone: r.phone }, contacts });
+      console.log(`\n  load(master_manifest)=${r.master_manifest_id} carrier="${r.company_name}"`);
+      console.log(`    assigned member: ${r.name} | ${r.position||'-'} | ${r.phone}`);
+      console.log(`    → waterfall picks: ${chosen ? `${chosen.phone} (${chosen.reason})` : 'NOBODY'}`);
+    }
+    await pool.end(); return;
+  }
+
+  // PICKUP:<carrier> — find which field actually holds the scheduled pickup time
+  if (name.startsWith('PICKUP:')) {
+    const term = name.slice('PICKUP:'.length).trim();
+    const idish = /^\d+$/.test(term);
+    const { rows: cs } = idish
+      ? await pool.query(`SELECT c.id AS carrier_id, co.company_name FROM carrier c JOIN company co ON co.id=c.company_id WHERE (c.id=$1 OR co.id=$1) AND c.deleted_at IS NULL`, [term])
+      : await pool.query(`SELECT c.id AS carrier_id, co.company_name FROM carrier c JOIN company co ON co.id=c.company_id WHERE (co.company_name ILIKE $1 OR co.trade_name ILIKE $1) AND c.deleted_at IS NULL LIMIT 1`, [`%${term}%`]);
+    if (!cs.length) { console.log(`no carrier for "${term}"`); await pool.end(); return; }
+    const cid = cs[0].carrier_id;
+
+    console.log(`=== cargo columns that look like pickup time ===`);
+    const { rows: cargoCols } = await pool.query(
+      `SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name='cargo' AND table_schema='public'
+          AND (column_name ILIKE '%pick%' OR column_name ILIKE '%time%' OR column_name ILIKE '%from%' OR column_name ILIKE '%to%' OR column_name ILIKE '%date%')
+        ORDER BY ordinal_position`);
+    cargoCols.forEach(c => console.log(`  cargo.${c.column_name} (${c.data_type})`));
+
+    console.log(`\n=== "${cs[0].company_name}" shipments — scheduled pickup = cargo.pickup_at + cargo.pick_from ===`);
+    const { rows } = await pool.query(
+      `SELECT s.reference,
+              cg.pickup_at::text                     AS pickup_date,
+              cg.pick_from::text                     AS pick_time,
+              (cg.pickup_at + cg.pick_from)          AS scheduled_pickup,
+              cg.actual_pick_date_from               AS actual_pickup,
+              ss.pick_at                             AS status_pick_at
+         FROM shipment s
+         JOIN master_manifest mm ON mm.id = s.master_ship_id
+         LEFT JOIN shipment_status ss ON ss.id = s.ship_status_id
+         LEFT JOIN LATERAL (SELECT pickup_at, pick_from, actual_pick_date_from FROM cargo WHERE cargo.shipment_id = s.id ORDER BY id LIMIT 1) cg ON true
+        WHERE mm.carrier_id = $1 AND s.deleted_at IS NULL
+        ORDER BY s.id DESC LIMIT 12`, [cid]);
+    const ts = v => { try { return v ? new Date(v).toISOString().slice(0, 16) : '—'; } catch { return String(v); } };
+    rows.forEach(r => console.log(`  ${r.reference.padEnd(14)} scheduled=${ts(r.scheduled_pickup)}  (date=${r.pickup_date || '—'} time=${r.pick_time || '—'})  actual=${ts(r.actual_pickup)}  status.pick_at=${ts(r.status_pick_at)}`));
+    console.log(`\n(scheduled_pickup is what eligibility should compare against.)`);
+    await pool.end(); return;
+  }
+
+  // --testable : find eligible loads (Allocated, not On The Road) that ARE assigned to a team member
+  if (name.trim() === '--testable') {
+    const { rows } = await pool.query(
+      `SELECT s.reference, s.manifest_id, s.master_ship_id AS master_manifest_id,
+              mm.carrier_id, co.company_name,
+              mm.team_id, (t.first_name||' '||t.last_name) AS assignee, t.position, t.phone, ss.pick_at
+         FROM shipment s
+         JOIN master_manifest mm ON mm.id = s.master_ship_id
+         JOIN team t     ON t.id = mm.team_id
+         JOIN carrier c  ON c.id = mm.carrier_id
+         JOIN company co ON co.id = c.company_id
+         LEFT JOIN shipment_status ss ON ss.id = s.ship_status_id
+        WHERE mm.team_id IS NOT NULL AND s.deleted_at IS NULL
+          AND EXISTS    (SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='Allocated'   AND m.deleted_at IS NULL)
+          AND NOT EXISTS(SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='On The Road' AND m.deleted_at IS NULL)
+        ORDER BY ss.pick_at DESC NULLS LAST
+        LIMIT 10`);
+    if (!rows.length) { console.log('No eligible+assigned loads found.'); await pool.end(); return; }
+    console.log(`Found ${rows.length} eligible + assigned load(s) — pick one to test:\n`);
+    rows.forEach(r => {
+      console.log(`  load ${r.reference}  (carrier "${r.company_name}")`);
+      console.log(`    assigned to: ${r.assignee} | ${r.position || '-'} | current phone ${r.phone || '-'}  (team_id=${r.team_id})`);
+      console.log(`    ids → manifest_id=${r.manifest_id} master_manifest_id=${r.master_manifest_id} carrier_id=${r.carrier_id}  pickAt=${r.pick_at ? new Date(r.pick_at).toISOString().slice(0,16) : '-'}\n`);
+    });
+    await pool.end(); return;
+  }
+
+  // ELIGIBLE:<carrier search> — show a carrier's shipments + eligibility flags (validates the query joins)
+  if (name.startsWith('ELIGIBLE:')) {
+    const term = name.slice('ELIGIBLE:'.length).trim();
+    const idish = /^\d+$/.test(term);
+    const { rows: cs } = idish
+      ? await pool.query(`SELECT c.id AS carrier_id, co.company_name FROM carrier c JOIN company co ON co.id=c.company_id WHERE (c.id=$1 OR co.id=$1) AND c.deleted_at IS NULL`, [term])
+      : await pool.query(`SELECT c.id AS carrier_id, co.company_name FROM carrier c JOIN company co ON co.id=c.company_id WHERE (co.company_name ILIKE $1 OR co.trade_name ILIKE $1) AND c.deleted_at IS NULL LIMIT 1`, [`%${term}%`]);
+    if (!cs.length) { console.log(`no carrier for "${term}"`); await pool.end(); return; }
+    const cid = cs[0].carrier_id;
+    console.log(`Carrier "${cs[0].company_name}" (carrier_id=${cid}) — recent shipments + eligibility:`);
+    const { rows } = await pool.query(
+      `SELECT s.reference, s.manifest_id, s.master_ship_id AS master_manifest_id, ss.pick_at,
+              EXISTS(SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='Allocated'    AND m.deleted_at IS NULL) AS allocated,
+              EXISTS(SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='On The Road'  AND m.deleted_at IS NULL) AS on_the_road
+         FROM shipment s
+         JOIN master_manifest mm ON mm.id = s.master_ship_id
+         LEFT JOIN shipment_status ss ON ss.id = s.ship_status_id
+        WHERE mm.carrier_id = $1 AND s.deleted_at IS NULL
+        ORDER BY ss.pick_at DESC NULLS LAST LIMIT 20`, [cid]);
+    if (!rows.length) { console.log('  (no shipments found — check the master_ship_id join)'); await pool.end(); return; }
+    const now = Date.now();
+    rows.forEach(r => {
+      const past = r.pick_at && new Date(r.pick_at).getTime() < now;
+      const eligible = r.allocated && !r.on_the_road && past;
+      console.log(`  ${r.reference.padEnd(14)} alloc=${r.allocated} onRoad=${r.on_the_road} pickAt=${r.pick_at ? new Date(r.pick_at).toISOString().slice(0,16) : '-'} ${eligible ? '  ← ELIGIBLE' : ''}`);
+    });
+    await pool.end(); return;
+  }
+
+  const isId = /^\d+$/.test(name.trim());
+  const { rows: carriers } = isId
+    ? await pool.query(
+        `SELECT c.id AS carrier_id, co.id AS company_id, co.company_name, co.trade_name
+           FROM carrier c JOIN company co ON co.id = c.company_id
+          WHERE (c.id = $1 OR co.id = $1) AND c.deleted_at IS NULL`, [name.trim()])
+    : await pool.query(
+        `SELECT c.id AS carrier_id, co.id AS company_id, co.company_name, co.trade_name
+           FROM carrier c JOIN company co ON co.id = c.company_id
+          WHERE (co.company_name ILIKE $1 OR co.trade_name ILIKE $1) AND c.deleted_at IS NULL`, [`%${name}%`]);
+
+  if (!carriers.length) {
+    console.log(`No carrier matched "${name}". Candidate companies:`);
+    const { rows: cands } = isId
+      ? await pool.query(
+          `SELECT co.id AS company_id, co.company_name, co.trade_name,
+                  (SELECT count(*) FROM carrier c WHERE c.company_id = co.id) AS carriers,
+                  (SELECT count(*) FROM team t WHERE t.company_id = co.id AND NULLIF(t.phone,'') IS NOT NULL) AS phone_contacts
+             FROM company co WHERE co.id = $1`, [name.trim()])
+      : await pool.query(
+          `SELECT co.id AS company_id, co.company_name, co.trade_name,
+                  (SELECT count(*) FROM carrier c WHERE c.company_id = co.id) AS carriers,
+                  (SELECT count(*) FROM team t WHERE t.company_id = co.id AND NULLIF(t.phone,'') IS NOT NULL) AS phone_contacts
+             FROM company co WHERE co.company_name ILIKE $1 OR co.trade_name ILIKE $1 LIMIT 25`, [`%${name}%`]);
+    if (!cands.length) console.log('  (no companies matched either)');
+    cands.forEach(c => console.log(`  company_id=${c.company_id}  carriers=${c.carriers}  phoneContacts=${c.phone_contacts}  "${c.company_name || c.trade_name}"`));
+    await pool.end(); return;
+  }
+  console.log(`Matched carrier(s):`);
+  carriers.forEach(c => console.log(`  carrier_id=${c.carrier_id} company_id=${c.company_id} "${c.company_name || c.trade_name}"`));
+  const carrier = carriers[0];
+
+  const { rows: contacts } = await pool.query(
+    `SELECT (first_name||' '||last_name) AS name, position, phone, is_primary AS "isPrimary"
+       FROM team WHERE company_id = $1 AND deleted_at IS NULL`, [carrier.company_id]);
+
+  console.log(`\nTeam contacts (${contacts.length}):`);
+  contacts.forEach(c => console.log(`  ${(c.name||'').padEnd(24)} ${(c.position||'-').padEnd(18)} ${(c.phone||'-').padEnd(18)} primary=${c.isPrimary} validMobile=${isValidAuMobile(c.phone)}`));
+
+  // ── Scenario 2: NO assigned driver → waterfall over contacts ──
+  console.log(`\n[Scenario B — NO assigned driver]  →  ${show(resolvePhone({ assigned: null, contacts }))}`);
+
+  // ── Scenario 1: load assigned to a team member ──
+  const { rows: mm } = await pool.query(
+    `SELECT mm.id, mm.team_id FROM master_manifest mm
+      WHERE mm.carrier_id = $1 AND mm.team_id IS NOT NULL AND mm.deleted_at IS NULL LIMIT 1`, [carrier.carrier_id]);
+  if (mm.length) {
+    const { rows: [am] } = await pool.query(
+      `SELECT (first_name||' '||last_name) AS name, position, phone FROM team WHERE id = $1`, [mm[0].team_id]);
+    console.log(`\n[Scenario A — load ${mm[0].id} assigned to team ${mm[0].team_id}]`);
+    console.log(`  assigned = ${am ? `${am.name} | ${am.position||'-'} | ${am.phone||'-'}` : 'team not found'}`);
+    console.log(`  →  ${show(resolvePhone({ assigned: am, contacts }))}`);
+  } else {
+    console.log(`\n[Scenario A — assigned driver]  no master_manifest with team_id for this carrier yet.`);
+    console.log(`  → assign a load to a team member in the dev UI, then re-run to test this path.`);
+  }
+  await pool.end();
+})().catch(e => { console.error('error:', e.message); process.exit(1); });

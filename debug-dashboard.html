@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WA Pickup Monitor — Debug Dashboard (mockup)</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171d2b; --line:#273044; --txt:#e6ebf5; --mut:#8a97b1;
+    --blue:#3b82f6; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --grey:#64748b; --violet:#a855f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  .env{font-size:12px;color:var(--mut);border:1px solid var(--line);padding:2px 8px;border-radius:6px}
+  .dry{color:var(--amber);border-color:var(--amber)}
+  .refresh{margin-left:auto;color:var(--mut);font-size:12px}
+  .summary{display:flex;gap:10px;padding:16px 22px;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:110px}
+  .card .n{font-size:22px;font-weight:700}
+  .card .l{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;background:var(--bg)}
+  tr:hover td{background:#131a28}
+  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
+  .b-queued{background:#334155;color:#cbd5e1}
+  .b-sent{background:#1e3a8a;color:#bfdbfe}
+  .b-delivered{background:#0e7490;color:#cffafe}
+  .b-await{background:#78350f;color:#fde68a}
+  .b-recorded{background:#14532d;color:#bbf7d0}
+  .b-followup{background:#581c87;color:#e9d5ff}
+  .b-error{background:#7f1d1d;color:#fecaca}
+  .ts{color:var(--mut);font-variant-numeric:tabular-nums}
+  .pending{color:var(--grey)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .reply{max-width:240px;overflow:hidden;text-overflow:ellipsis}
+  .err{color:var(--red)}
+  footer{padding:14px 22px;color:var(--mut);font-size:12px;border-top:1px solid var(--line)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+  .live{background:var(--green);animation:p 1.4s infinite}
+  @keyframes p{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</head>
+<body>
+<header>
+  <h1>📦 WA Pickup Monitor — Debug</h1>
+  <span class="env">env: platform-dev</span>
+  <span class="env dry">DRY_RUN</span>
+  <span class="env">phase: carrier · allowlist: 1</span>
+  <span class="refresh"><span class="dot live"></span>live · auto-refresh 5s · updated <span id="clock">—</span></span>
+</header>
+
+<div class="summary" id="summary"></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Shipment</th><th>Carrier contact</th><th>Phone</th><th>Stage</th>
+      <th>Sent</th><th>Delivered</th><th>Reply</th><th>Recorded</th><th>Follow-up</th><th>Note / error</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<footer>
+  Mockup with sample data. Live version reads from the isolated tracking store (DynamoDB) that both Lambdas write to at every step — nothing here touches shipment data.
+</footer>
+
+<script>
+// ---- SAMPLE DATA (fallback if no live tracking store) ----
+let rows = [
+  {ref:'AUSTPUXDHAW', carrier:'Coaster Freight', phone:'+61 4205 55999', stage:'RECORDED',
+   sent:'09:31:04', delivered:'09:31:22', reply:{t:'09:34:10', txt:'Yes, picked up', d:'YES'}, recorded:'09:34:12', followup:null, note:'On The Road milestone created'},
+  {ref:'AUSTEDK6VE8', carrier:'Big Rig Logistics', phone:'+61 4111 22333', stage:'AWAIT_ETA',
+   sent:'09:31:06', delivered:'09:31:40', reply:{t:'09:35:02', txt:'No, not yet', d:'NO'}, recorded:'09:35:03', followup:{sent:'09:35:04'}, note:'Follow-up sent — awaiting ETA'},
+  {ref:'AUSTQ9G5ABZ3', carrier:'Nightline Transport', phone:'+61 4770 00111', stage:'AWAIT_REPLY',
+   sent:'09:31:09', delivered:'09:31:31', reply:null, recorded:null, followup:null, note:'Awaiting reply'},
+  {ref:'AUSD70CYKDZ8', carrier:'Coaster Freight', phone:'+61 4205 55999', stage:'DELIVERED',
+   sent:'09:31:12', delivered:'09:31:29', reply:null, recorded:null, followup:null, note:'Delivered to handset'},
+  {ref:'AUST8BZLS2A', carrier:'Metro Haulage', phone:'+61 4900 88777', stage:'SENT',
+   sent:'09:31:15', delivered:null, reply:null, recorded:null, followup:null, note:'Awaiting delivery receipt'},
+  {ref:'AUSHZVF6085', carrier:'Outback Carriers', phone:'+61 4333 44555', stage:'QUEUED',
+   sent:null, delivered:null, reply:null, recorded:null, followup:null, note:'Eligible — queued to send'},
+  {ref:'AUSTS17JI9T', carrier:'(no HubSpot contact)', phone:'+61 4001 23456', stage:'ERROR',
+   sent:null, delivered:null, reply:null, recorded:null, followup:null, note:'No matching HubSpot contact — skipped'},
+  {ref:'AUSTLU8M4TZ', carrier:'Reliable Freight', phone:'+61 4680 99001', stage:'ETA_RECORDED',
+   sent:'09:20:01', delivered:'09:20:18', reply:{t:'09:22:40', txt:'No', d:'NO'}, recorded:'09:22:41',
+   followup:{sent:'09:22:42', reply:'09:26:10', eta:'Tomorrow 7am'}, note:'ETA recorded: Tomorrow 7am'},
+];
+
+const BADGE = {
+  QUEUED:['b-queued','Queued'], SENT:['b-sent','Sent'], DELIVERED:['b-delivered','Delivered'],
+  AWAIT_REPLY:['b-await','Awaiting reply'], RECORDED:['b-recorded','Recorded ✔'],
+  AWAIT_ETA:['b-followup','Awaiting ETA'], ETA_RECORDED:['b-recorded','ETA recorded ✔'],
+  ERROR:['b-error','Error ✕'],
+};
+const td = v => v ? '<span class="ts">'+v+'</span>' : '<span class="pending">—</span>';
+
+function render(){
+  const counts={};
+  rows.forEach(r=>counts[r.stage]=(counts[r.stage]||0)+1);
+  const order=['QUEUED','SENT','DELIVERED','AWAIT_REPLY','AWAIT_ETA','RECORDED','ETA_RECORDED','ERROR'];
+  document.getElementById('summary').innerHTML = order.filter(s=>counts[s]).map(s=>
+    `<div class="card"><div class="n">${counts[s]}</div><div class="l">${BADGE[s][1]}</div></div>`).join('')
+    + `<div class="card"><div class="n">${rows.length}</div><div class="l">total</div></div>`;
+
+  document.getElementById('rows').innerHTML = rows.map(r=>{
+    const [cls,label]=BADGE[r.stage];
+    const reply = r.reply ? `<span class="ts">${r.reply.t}</span> · <span class="reply">${r.reply.txt}</span>` : '<span class="pending">—</span>';
+    const fu = r.followup ? (r.followup.eta ? `<span class="ts">ETA: ${r.followup.eta}</span>` : `<span class="ts">sent ${r.followup.sent}</span>`) : '<span class="pending">—</span>';
+    const note = r.stage==='ERROR' ? `<span class="err">${r.note}</span>` : r.note;
+    return `<tr>
+      <td class="mono">${r.ref}</td>
+      <td>${r.carrier}</td>
+      <td class="mono">${r.phone}</td>
+      <td><span class="badge ${cls}">${label}</span></td>
+      <td>${td(r.sent)}</td>
+      <td>${td(r.delivered)}</td>
+      <td>${reply}</td>
+      <td>${td(r.recorded)}</td>
+      <td>${fu}</td>
+      <td>${note}</td>
+    </tr>`;
+  }).join('');
+}
+function tick(){ const d=new Date(); document.getElementById('clock').textContent = d.toLocaleTimeString(); }
+async function load(){
+  try{
+    const r = await fetch('/api/tracking',{cache:'no-store'});
+    if(r.ok){ const data = await r.json(); if(Array.isArray(data) && data.length){ rows = data; } }
+  }catch(e){ /* not served via serve.js — keep sample data */ }
+  render(); tick();
+}
+load(); setInterval(load,5000); setInterval(tick,1000);
+</script>
+</body>
+</html>

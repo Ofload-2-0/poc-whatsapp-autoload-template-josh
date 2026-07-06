@@ -1,0 +1,14 @@
+{
+  "name": "wa-pickup-monitor",
+  "version": "2.0.0",
+  "description": "WhatsApp pickup-confirmation monitor for Ofload (cron + webhook Lambdas)",
+  "main": "pickupMonitor.js",
+  "scripts": {
+    "test": "node --test",
+    "demo": "node demo.js",
+    "serve": "node serve.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
