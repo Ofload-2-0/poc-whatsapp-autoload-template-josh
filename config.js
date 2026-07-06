@@ -16,8 +16,9 @@ module.exports = {
   TRIGGER_AFTER_MS: parseInt(process.env.TRIGGER_AFTER_MS || '7200000', 10), // 2h prod, 0 test
 
   // ── Rollout gating (fail-closed) ───────────────────────
-  PHASE: process.env.WA_PHASE || 'carrier',      // 'load' | 'carrier' | 'all'
+  PHASE: process.env.WA_PHASE || 'carrier',      // 'load' | 'team' | 'carrier' | 'all'
   ENABLED_CARRIERS: list(process.env.WA_ENABLED_CARRIERS),
+  ENABLED_TEAM: list(process.env.WA_ENABLED_TEAM),   // individual team-member ids (finest live gate)
   ENABLED_LOADS: list(process.env.WA_ENABLED_LOADS),
   ALLOW_ALL: bool(process.env.WA_ALLOW_ALL, false), // must be true for PHASE=all
   // Hard cap on sends per cron run — the blast-radius guard. Default 1 (safest).

@@ -24,7 +24,7 @@ function pool() {
  * scheduled pickup + TRIGGER_AFTER_MS < now, passes the fail-closed allowlist.
  */
 async function getEligibleShipments() {
-  const { PHASE, ENABLED_CARRIERS, ENABLED_LOADS, ALLOW_ALL, TRIGGER_AFTER_MS,
+  const { PHASE, ENABLED_CARRIERS, ENABLED_TEAM, ENABLED_LOADS, ALLOW_ALL, TRIGGER_AFTER_MS,
           MILESTONE_ALLOCATED, MILESTONE_ON_THE_ROAD } = cfg;
 
   const params = [String(TRIGGER_AFTER_MS), MILESTONE_ALLOCATED, MILESTONE_ON_THE_ROAD];
@@ -32,6 +32,9 @@ async function getEligibleShipments() {
   if (PHASE === 'carrier') {
     if (!ENABLED_CARRIERS.length) { console.warn('[db] PHASE=carrier, empty allowlist → nothing'); return []; }
     params.push(ENABLED_CARRIERS); gate = `AND mm.carrier_id::text = ANY($${params.length})`;
+  } else if (PHASE === 'team') {
+    if (!ENABLED_TEAM.length) { console.warn('[db] PHASE=team, empty allowlist → nothing'); return []; }
+    params.push(ENABLED_TEAM); gate = `AND mm.team_id::text = ANY($${params.length})`;
   } else if (PHASE === 'load') {
     if (!ENABLED_LOADS.length) { console.warn('[db] PHASE=load, empty allowlist → nothing'); return []; }
     params.push(ENABLED_LOADS); gate = `AND s.reference = ANY($${params.length})`;

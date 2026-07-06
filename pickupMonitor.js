@@ -25,6 +25,17 @@ exports.handler = async () => {
   }
   console.log(`[WA Monitor] ${loads.length} eligible shipment(s)`);
 
+  // Dedup: skip loads already messaged / in-flight (tracking store) so we never re-send.
+  const IN_FLIGHT = ['WA_SENT', 'AWAITING_REPLY', 'ON_THE_ROAD', 'FOLLOWUP_SENT', 'AWAITING_ETA', 'ETA_RECORDED', 'SKIPPED'];
+  const fresh = [];
+  for (const load of loads) {
+    const t = await tracking.get(load.reference);
+    if (t && IN_FLIGHT.includes(t.stage)) continue;
+    fresh.push(load);
+  }
+  if (fresh.length !== loads.length) console.log(`[WA Monitor] ${loads.length - fresh.length} already handled — skipping; ${fresh.length} fresh`);
+  loads = fresh;
+
   // Blast-radius guard: never send more than MAX_SENDS in one run.
   if (loads.length > cfg.MAX_SENDS) {
     console.warn(`[WA Monitor] capping to MAX_SENDS=${cfg.MAX_SENDS} of ${loads.length} eligible (raise WA_MAX_SENDS to widen). Not-sent this run: ${loads.slice(cfg.MAX_SENDS).map(l => l.reference).join(', ')}`);
