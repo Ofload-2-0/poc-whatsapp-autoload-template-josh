@@ -86,8 +86,8 @@ exports.handler = async (event) => {
     }
 
     if (effective === 'yes') {
-      await eos.startJob(track.teamId, track.manifestId, toSql(replyTime));
-      await eos.onTheRoad(track.teamId, track.manifestId, toSql(replyTime)); // R1: confirm if needed
+      await eos.startJob(track.carrierId, track.manifestId, toSql(replyTime));
+      await eos.onTheRoad(track.carrierId, track.manifestId, toSql(replyTime)); // R1: confirm if needed
       await tracking.upsert(ref, { stage: STAGE.ON_THE_ROAD, reply: replyText, decision: 'yes', pickupRecordedAt: replyTime.toISOString() });
       console.log(`[WA Webhook] ${ref} → On The Road`);
     } else {

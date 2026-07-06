@@ -18,9 +18,11 @@ const pool = new Pool({ connectionString: cfg.DATABASE_URL, max: 2, connectionTi
 
 (async () => {
   const { rows: [load] } = await pool.query(
-    `SELECT s.reference, s.manifest_id, s.master_ship_id AS master_manifest_id, mm.carrier_id, mm.team_id,
-            (SELECT pick_at FROM shipment_status ss WHERE ss.id = s.ship_status_id) AS pick_at
-       FROM shipment s JOIN master_manifest mm ON mm.id = s.master_ship_id
+    `SELECT s.reference, mf.id AS manifest_id, mm.id AS master_manifest_id, mm.carrier_id, mm.team_id,
+            (SELECT (pickup_at + COALESCE(pick_from,'00:00:00+00'::timetz)) FROM cargo WHERE cargo.shipment_id = s.id AND pickup_at IS NOT NULL ORDER BY pickup_at LIMIT 1) AS pick_at
+       FROM shipment s
+       JOIN LATERAL (SELECT id, master_man_id FROM manifest WHERE shipment_id = s.id AND deleted_at IS NULL ORDER BY id DESC LIMIT 1) mf ON true
+       JOIN master_manifest mm ON mm.id = mf.master_man_id
       WHERE s.reference = $1 AND s.deleted_at IS NULL LIMIT 1`, [ref]);
   if (!load) { console.error(`load not found: ${ref}`); process.exit(1); }
 

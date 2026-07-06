@@ -39,16 +39,63 @@ const show = c => c ? `${c.phone} (${c.reason}${c.name ? ', ' + c.name : ''})` :
     await pool.end(); return;
   }
 
+  // MANIFEST:<ref> — show the correct manifest linkage (manifest.shipment_id path vs shipment.manifest_id)
+  if (name.startsWith('MANIFEST:')) {
+    const ref = name.slice('MANIFEST:'.length).trim();
+    const { rows: [s] } = await pool.query(`SELECT id, manifest_id, master_ship_id FROM shipment WHERE reference=$1 AND deleted_at IS NULL LIMIT 1`, [ref]);
+    if (!s) { console.log('no shipment', ref); await pool.end(); return; }
+    console.log(`shipment ${ref}: id=${s.id}  shipment.manifest_id=${s.manifest_id}  shipment.master_ship_id=${s.master_ship_id}`);
+    const { rows } = await pool.query(
+      `SELECT m.id AS manifest_id, m.master_man_id, mm.id AS master_manifest_id, mm.carrier_id, mm.team_id
+         FROM manifest m JOIN master_manifest mm ON mm.id = m.master_man_id
+        WHERE m.shipment_id = $1`, [s.id]);
+    console.log('via manifest.shipment_id →', JSON.stringify(rows, null, 2));
+    await pool.end(); return;
+  }
+
+  // EOS-CRED — find an active api_client and load its creds into .env (secret NOT printed)
+  if (name.trim() === 'EOS-CRED') {
+    const { rows } = await pool.query(
+      `SELECT client_id, client_secret, name FROM api_clients WHERE active = true ORDER BY id LIMIT 1`);
+    if (!rows.length) { console.log('No active api_client found — ask backend for a credential (Option A).'); await pool.end(); return; }
+    const { client_id, client_secret, name: cname } = rows[0];
+    const fs = require('fs'); const envp = require('path').join(__dirname, '.env');
+    let env = ''; try { env = fs.readFileSync(envp, 'utf8'); } catch {}
+    const set = (e, k, v) => { const re = new RegExp('^' + k + '=.*$', 'm'); return re.test(e) ? e.replace(re, `${k}="${v}"`) : e.trimEnd() + `\n${k}="${v}"\n`; };
+    env = set(env, 'EOS_CLIENT_ID', client_id);
+    env = set(env, 'EOS_CLIENT_SECRET', client_secret);
+    fs.writeFileSync(envp, env);
+    console.log(`✓ Loaded EOS credential for api_client "${cname}" (client_id=${client_id}) into .env. (secret not printed)`);
+    await pool.end(); return;
+  }
+
+  // VERIFY:<ref> — read-only snapshot of a load's milestones / status / pickup (run before & after a write)
+  if (name.startsWith('VERIFY:')) {
+    const ref = name.slice('VERIFY:'.length).trim();
+    const { rows: [s] } = await pool.query(`SELECT id, ship_status FROM shipment WHERE reference = $1 AND deleted_at IS NULL LIMIT 1`, [ref]);
+    if (!s) { console.log(`no shipment ${ref}`); await pool.end(); return; }
+    console.log(`shipment ${ref} (id=${s.id})  ship_status=${s.ship_status}`);
+    const { rows: ms } = await pool.query(
+      `SELECT type, actual_time, created_at FROM shipment_milestones WHERE shipment_id = $1 AND deleted_at IS NULL
+        ORDER BY created_at DESC LIMIT 12`, [s.id]);
+    console.log('recent milestones:');
+    ms.forEach(m => console.log(`  ${(m.type || '').padEnd(22)} actual=${m.actual_time || '—'}  created=${m.created_at}`));
+    const { rows: [c] } = await pool.query(`SELECT pickup_at, actual_pick_date_from FROM cargo WHERE shipment_id = $1 ORDER BY id LIMIT 1`, [s.id]);
+    console.log(`cargo: scheduled_pickup_date=${c?.pickup_at || '—'}  actual_pick_date_from=${c?.actual_pick_date_from || '—'}`);
+    await pool.end(); return;
+  }
+
   // CANDIDATES-JSON — machine-readable candidate loads for the control panel (resolved phone incl.)
   if (name.trim() === 'CANDIDATES-JSON') {
     const { rows } = await pool.query(
-      `SELECT s.reference, s.manifest_id, s.master_ship_id AS master_manifest_id,
+      `SELECT s.reference, mf.id AS manifest_id, mm.id AS master_manifest_id,
               mm.carrier_id, co.company_name, mm.team_id,
               (t.first_name||' '||t.last_name) AS assignee, t.position, t.phone,
               (SELECT (pickup_at + COALESCE(pick_from,'00:00:00+00'::timetz))
                  FROM cargo WHERE cargo.shipment_id=s.id AND pickup_at IS NOT NULL ORDER BY pickup_at LIMIT 1) AS scheduled_pickup
          FROM shipment s
-         JOIN master_manifest mm ON mm.id = s.master_ship_id
+         JOIN LATERAL (SELECT id, master_man_id FROM manifest WHERE shipment_id = s.id AND deleted_at IS NULL ORDER BY id DESC LIMIT 1) mf ON true
+         JOIN master_manifest mm ON mm.id = mf.master_man_id
          JOIN carrier c  ON c.id = mm.carrier_id
          JOIN company co ON co.id = c.company_id
          LEFT JOIN team t ON t.id = mm.team_id

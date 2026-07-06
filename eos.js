@@ -39,15 +39,17 @@ async function call(method, path, body) {
   return text ? JSON.parse(text) : {};
 }
 
-/** YES → Start Job (BeginFulfillment) + set pickup time = actualTime (ISO 'YYYY-MM-DD HH:mm:ss'). */
-function startJob(teamId, manifestId, actualTime) {
-  return call('POST', `/api/carrier/team/${teamId}/shipment/${manifestId}/status`,
+/** YES → Start Job (BeginFulfillment) + set pickup time = actualTime (ISO 'YYYY-MM-DD HH:mm:ss').
+ *  Uses the CARRIER route (checks manifest-belongs-to-carrier) — the team route adds a
+ *  hasAccessToManifest gate that a non-driver caller fails (403). */
+function startJob(carrierId, manifestId, actualTime) {
+  return call('POST', `/api/carrier/${carrierId}/shipment/${manifestId}/status`,
     { status: 'is_begin', actual_time: actualTime });
 }
 
 /** Explicitly create the "On The Road" milestone. (R1 — may be implied by startJob's auto-progression.) */
-function onTheRoad(teamId, manifestId, actualTime) {
-  return call('POST', `/api/carrier/team/${teamId}/shipment/${manifestId}/status`,
+function onTheRoad(carrierId, manifestId, actualTime) {
+  return call('POST', `/api/carrier/${carrierId}/shipment/${manifestId}/status`,
     { milestone: cfg.MILESTONE_ON_THE_ROAD, actual_time: actualTime });
 }
 

@@ -42,17 +42,20 @@ async function getEligibleShipments() {
     if (!ALLOW_ALL) { console.warn('[db] PHASE=all but WA_ALLOW_ALL not set → nothing'); return []; }
   } else { console.warn(`[db] unknown PHASE=${PHASE} → nothing`); return []; }
 
-  // Scheduled pickup lives on cargo: pickup_at (date) + pick_from (time). Verified in eos 2026-07-06.
+  // Authoritative path (what the app/API use): shipment → manifest → master_manifest.
+  // manifest.id = {manifestId} for the status endpoint; master_manifest = carrier/team/notes.
+  // Scheduled pickup: cargo.pickup_at (date) + cargo.pick_from (time). Verified in eos 2026-07-06.
   const sql = `
     SELECT s.id                 AS shipment_id,
            s.reference          AS reference,
-           s.manifest_id        AS manifest_id,        -- {manifestId} for status endpoint
-           s.master_ship_id     AS master_manifest_id, -- {masterManifestId} for notes/assign
+           mf.id                AS manifest_id,        -- {manifestId} for status endpoint
+           mm.id                AS master_manifest_id, -- {masterManifestId} for notes
            mm.carrier_id        AS carrier_id,
            mm.team_id           AS assigned_team_id,
            cg.scheduled_pickup  AS pickup_at
     FROM shipment s
-    JOIN master_manifest mm ON mm.id = s.master_ship_id
+    JOIN LATERAL (SELECT id, master_man_id FROM manifest WHERE shipment_id = s.id AND deleted_at IS NULL ORDER BY id DESC LIMIT 1) mf ON true
+    JOIN master_manifest mm ON mm.id = mf.master_man_id
     JOIN LATERAL (
       SELECT (pickup_at + COALESCE(pick_from, '00:00:00+00'::timetz)) AS scheduled_pickup
         FROM cargo WHERE cargo.shipment_id = s.id AND pickup_at IS NOT NULL
@@ -86,11 +89,14 @@ async function getCarrierContacts(carrierId) {
   return rows;
 }
 
-/** Match a reply back to a shipment by reference. */
+/** Match a reply back to a shipment by reference (manifest path — same as eligibility). */
 async function getShipmentByReference(reference) {
   const { rows } = await pool().query(
-    `SELECT s.id AS shipment_id, s.reference, s.manifest_id, s.master_ship_id AS master_manifest_id, mm.team_id AS assigned_team_id
-       FROM shipment s JOIN master_manifest mm ON mm.id = s.master_ship_id
+    `SELECT s.id AS shipment_id, s.reference, mf.id AS manifest_id, mm.id AS master_manifest_id,
+            mm.carrier_id, mm.team_id AS assigned_team_id
+       FROM shipment s
+       JOIN LATERAL (SELECT id, master_man_id FROM manifest WHERE shipment_id = s.id AND deleted_at IS NULL ORDER BY id DESC LIMIT 1) mf ON true
+       JOIN master_manifest mm ON mm.id = mf.master_man_id
       WHERE s.reference = $1 AND s.deleted_at IS NULL LIMIT 1`, [reference]);
   return rows[0] || null;
 }
