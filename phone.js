@@ -65,4 +65,11 @@ function resolvePhone({ assigned, contacts = [] } = {}) {
   return pick(top, reason);
 }
 
-module.exports = { resolvePhone, isValidAuMobile, normaliseAu, roleRank };
+// Final recipient gate: if allow[] is non-empty, phone must be in it. Empty = no restriction.
+function isAllowedRecipient(phone, allow = []) {
+  if (!allow || !allow.length) return true;
+  const n = normaliseAu(phone);
+  return allow.some(a => normaliseAu(a) === n);
+}
+
+module.exports = { resolvePhone, isValidAuMobile, normaliseAu, roleRank, isAllowedRecipient };

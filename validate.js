@@ -39,6 +39,40 @@ const show = c => c ? `${c.phone} (${c.reason}${c.name ? ', ' + c.name : ''})` :
     await pool.end(); return;
   }
 
+  // CANDIDATES-JSON — machine-readable candidate loads for the control panel (resolved phone incl.)
+  if (name.trim() === 'CANDIDATES-JSON') {
+    const { rows } = await pool.query(
+      `SELECT s.reference, s.manifest_id, s.master_ship_id AS master_manifest_id,
+              mm.carrier_id, co.company_name, mm.team_id,
+              (t.first_name||' '||t.last_name) AS assignee, t.position, t.phone,
+              (SELECT (pickup_at + COALESCE(pick_from,'00:00:00+00'::timetz))
+                 FROM cargo WHERE cargo.shipment_id=s.id AND pickup_at IS NOT NULL ORDER BY pickup_at LIMIT 1) AS scheduled_pickup
+         FROM shipment s
+         JOIN master_manifest mm ON mm.id = s.master_ship_id
+         JOIN carrier c  ON c.id = mm.carrier_id
+         JOIN company co ON co.id = c.company_id
+         LEFT JOIN team t ON t.id = mm.team_id
+        WHERE s.deleted_at IS NULL
+          AND EXISTS    (SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='Allocated'   AND m.deleted_at IS NULL)
+          AND NOT EXISTS(SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='On The Road' AND m.deleted_at IS NULL)
+        ORDER BY scheduled_pickup DESC NULLS LAST LIMIT 50`);
+    const out = [];
+    for (const r of rows) {
+      const contacts = (await pool.query(
+        `SELECT (first_name||' '||last_name) AS name, position, phone, is_primary AS "isPrimary"
+           FROM team WHERE company_id = (SELECT company_id FROM carrier WHERE id=$1) AND deleted_at IS NULL AND NULLIF(phone,'') IS NOT NULL`, [r.carrier_id])).rows;
+      const chosen = resolvePhone({ assigned: r.team_id ? { name: r.assignee, position: r.position, phone: r.phone } : null, contacts });
+      out.push({
+        ref: r.reference, carrier: r.company_name, assignee: r.assignee || null, position: r.position || null,
+        phone: chosen ? chosen.phone : null, phoneReason: chosen ? chosen.reason : 'none',
+        teamId: r.team_id, manifestId: r.manifest_id, masterManifestId: r.master_manifest_id, carrierId: r.carrier_id,
+        scheduledPickup: r.scheduled_pickup,
+      });
+    }
+    console.log('__CANDIDATES__' + JSON.stringify(out));
+    await pool.end(); return;
+  }
+
   // PICKUP:<carrier> — find which field actually holds the scheduled pickup time
   if (name.startsWith('PICKUP:')) {
     const term = name.slice('PICKUP:'.length).trim();

@@ -7,7 +7,7 @@
  */
 const { Pool } = require('pg');
 const cfg = require('./config');
-const { resolvePhone } = require('./phone');
+const { resolvePhone, isAllowedRecipient } = require('./phone');
 const hubspot = require('./hubspot');
 const tracking = require('./tracking');
 const { STAGE } = tracking;
@@ -35,6 +35,11 @@ const pool = new Pool({ connectionString: cfg.DATABASE_URL, max: 2, connectionTi
   const chosen = resolvePhone({ assigned, contacts });
   console.log(`load ${ref}: resolved →`, chosen);
   if (!chosen) { console.error('no valid phone — aborting'); await pool.end(); process.exit(1); }
+  if (!isAllowedRecipient(chosen.phone, cfg.ALLOWED_PHONES)) {
+    console.error(`recipient ${chosen.phone} not in WA_ALLOWED_PHONES — refusing to send`);
+    await tracking.upsert(ref, { stage: STAGE.SKIPPED, note: 'recipient not in allowlist' });
+    await pool.end(); process.exit(1);
+  }
 
   await tracking.upsert(ref, {
     stage: STAGE.ELIGIBLE, phone: chosen.phone, contactName: chosen.name, phoneReason: chosen.reason,

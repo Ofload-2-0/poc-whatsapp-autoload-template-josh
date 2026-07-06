@@ -24,6 +24,9 @@ module.exports = {
   // Hard cap on sends per cron run — the blast-radius guard. Default 1 (safest).
   // Raise deliberately as you widen the rollout. Excess eligible loads are logged, not sent.
   MAX_SENDS: parseInt(process.env.WA_MAX_SENDS || '1', 10),
+  // Recipient allowlist — if set, the ONLY numbers it may message. Empty = no extra restriction
+  // (rely on load/team/carrier gate). Set to your own number to guarantee "only me".
+  ALLOWED_PHONES: list(process.env.WA_ALLOWED_PHONES),
 
   // ── EOS milestone type strings (from ofload_site) ──────
   MILESTONE_ALLOCATED: process.env.WA_MS_ALLOCATED || 'Allocated',

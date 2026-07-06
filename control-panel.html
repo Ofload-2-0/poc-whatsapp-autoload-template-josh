@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WA Test Control Panel</title>
+<style>
+  :root{--bg:#0f1420;--panel:#171d2b;--line:#273044;--txt:#e6ebf5;--mut:#8a97b1;--blue:#3b82f6;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--violet:#a855f7;}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  h1{font-size:16px;margin:0;font-weight:600}
+  .lock{font-size:12px;color:var(--green);border:1px solid #14532d;background:#0c1f14;padding:2px 8px;border-radius:6px}
+  .mut{color:var(--mut)} .clock{margin-left:auto;color:var(--mut);font-size:12px}
+  section{margin:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .shead{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .shead h2{font-size:13px;margin:0;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+  button{background:#1e293b;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+  button:hover{background:#243044} button.primary{background:#1d4ed8;border-color:#1d4ed8} button.warn{background:#7f1d1d;border-color:#7f1d1d}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  input[type=text]{background:#0d1320;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:6px 10px;font-size:13px;min-width:220px}
+  label.mode{display:inline-flex;gap:5px;align-items:center;color:var(--mut);cursor:pointer}
+  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap;font-size:13px}
+  th{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  tr:hover td{background:#131a28} .mono{font-family:ui-monospace,Menlo,monospace}
+  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
+  .b-QUEUED{background:#334155;color:#cbd5e1}.b-SENT{background:#1e3a8a;color:#bfdbfe}.b-AWAIT_REPLY{background:#78350f;color:#fde68a}
+  .b-RECORDED{background:#14532d;color:#bbf7d0}.b-AWAIT_ETA{background:#581c87;color:#e9d5ff}.b-ETA_RECORDED{background:#14532d;color:#bbf7d0}.b-ERROR{background:#7f1d1d;color:#fecaca}
+  .pending{color:#64748b} pre#log{margin:0;padding:12px 14px;background:#0a0e17;color:#9fb0cc;font:12px/1.5 ui-monospace,Menlo,monospace;max-height:240px;overflow:auto;white-space:pre-wrap}
+  .warnbar{background:#3b2a0c;color:#fde68a;padding:6px 20px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🕹 WA Test Control Panel</h1>
+  <span class="lock">🔒 private · localhost only</span>
+  <span class="mut">mode:</span>
+  <label class="mode"><input type="radio" name="mode" value="dry" checked> Dry-run</label>
+  <label class="mode"><input type="radio" name="mode" value="live"> Live send</label>
+  <label class="mode"><input type="radio" name="mode" value="write"> Live + write-back</label>
+  <span class="mut">allowed #s:</span>
+  <input id="allowed" type="text" value="+61409766714" title="Only these numbers may be messaged (hard lock)"/>
+  <span class="clock" id="clock">—</span>
+</header>
+<div class="warnbar" id="modebar">Dry-run: nothing is sent or written — you'll see what WOULD happen.</div>
+
+<section>
+  <div class="shead">
+    <h2>Candidate orders (dev)</h2>
+    <button onclick="loadCandidates()">↻ Load candidates</button>
+    <button class="primary" onclick="sendSelected()" id="sendBtn" disabled>Send selected →</button>
+    <span class="mut" id="candMsg"></span>
+  </div>
+  <table><thead><tr>
+    <th><input type="checkbox" id="selAll" onchange="toggleAll(this)"></th>
+    <th>Load</th><th>Carrier</th><th>Assigned</th><th>Phone</th><th>via</th><th>Scheduled pickup</th>
+  </tr></thead><tbody id="cands"><tr><td colspan="7" class="pending">Click "Load candidates".</td></tr></tbody></table>
+</section>
+
+<section>
+  <div class="shead">
+    <h2>In-flight & status</h2>
+    <button onclick="pollReplies()">Poll replies now</button>
+    <label class="mode"><input type="checkbox" id="autopoll" onchange="toggleAuto(this)"> Auto-poll every 10s</label>
+    <span class="mut" id="statusMsg"></span>
+  </div>
+  <table><thead><tr><th>Load</th><th>Stage</th><th>Phone</th><th>Reply</th><th>ETA</th><th>Note</th></tr></thead>
+  <tbody id="status"><tr><td colspan="6" class="pending">No activity yet.</td></tr></tbody></table>
+</section>
+
+<section>
+  <div class="shead"><h2>Log</h2><button onclick="document.getElementById('log').textContent=''">clear</button></div>
+  <pre id="log"></pre>
+</section>
+
+<script>
+const $ = s => document.querySelector(s);
+const mode = () => document.querySelector('input[name=mode]:checked').value;
+const log = t => { const l=$('#log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; };
+let candidates = [];
+
+const MODEBAR = {
+  dry:  'Dry-run: nothing is sent or written — you\'ll see what WOULD happen.',
+  live: '⚠ Live send: real WhatsApps go out (only to allowed #s). Write-backs stay OFF.',
+  write:'⚠⚠ Live + write-back: real WhatsApps AND real milestone/note writes to dev.',
+};
+document.querySelectorAll('input[name=mode]').forEach(r=>r.onchange=()=>{ $('#modebar').textContent = MODEBAR[mode()]; });
+
+async function loadCandidates(){
+  $('#candMsg').textContent = 'loading… (opens a read-only tunnel, ~5s)';
+  try{
+    const r = await (await fetch('/api/candidates')).json();
+    if(r.error){ $('#candMsg').textContent = 'error: '+r.error; log(r.log||r.error); return; }
+    candidates = r.candidates||[];
+    $('#cands').innerHTML = candidates.length ? candidates.map((c,i)=>`
+      <tr>
+        <td><input type="checkbox" class="csel" data-i="${i}" ${c.phone?'':'disabled'} onchange="syncSend()"></td>
+        <td class="mono">${c.ref}</td><td>${c.carrier||'—'}</td>
+        <td>${c.assignee||'—'}${c.position?` <span class="mut">(${c.position})</span>`:''}</td>
+        <td class="mono">${c.phone||'<span class="pending">no valid mobile</span>'}</td>
+        <td class="mut">${c.phoneReason||''}</td>
+        <td class="mut">${c.scheduledPickup?new Date(c.scheduledPickup).toLocaleString():'—'}</td>
+      </tr>`).join('') : '<tr><td colspan="7" class="pending">No eligible candidates.</td></tr>';
+    $('#candMsg').textContent = `${candidates.length} candidate(s)`;
+    syncSend();
+  }catch(e){ $('#candMsg').textContent='failed: '+e.message; }
+}
+function toggleAll(cb){ document.querySelectorAll('.csel:not(:disabled)').forEach(x=>x.checked=cb.checked); syncSend(); }
+function selectedRefs(){ return [...document.querySelectorAll('.csel:checked')].map(x=>candidates[+x.dataset.i].ref); }
+function syncSend(){ $('#sendBtn').disabled = selectedRefs().length===0; }
+
+async function sendSelected(){
+  const refs = selectedRefs(); if(!refs.length) return;
+  const m = mode();
+  if(m!=='dry' && !confirm(`${m==='write'?'LIVE + WRITE-BACK':'LIVE send'} to ${refs.length} load(s)? Only allowed #s will be messaged.`)) return;
+  $('#sendBtn').disabled=true; $('#candMsg').textContent='sending…';
+  log(`\n▶ SEND [${m}] ${refs.join(', ')}`);
+  const r = await (await fetch('/api/send',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({refs, mode:m, allowedPhones:$('#allowed').value})})).json();
+  (r.results||[]).forEach(x=>log(`— ${x.ref} (exit ${x.code}):\n${x.out.trim()}`));
+  $('#candMsg').textContent='done'; syncSend(); refreshStatus();
+}
+
+async function pollReplies(){
+  const inflight = [...document.querySelectorAll('#status tr')].length; // trigger refresh anyway
+  const refs = (await (await fetch('/api/tracking')).json())
+    .filter(r=>['AWAIT_REPLY','AWAIT_ETA','SENT'].includes(r.stage)).map(r=>r.ref);
+  if(!refs.length){ $('#statusMsg').textContent='nothing awaiting reply'; refreshStatus(); return; }
+  $('#statusMsg').textContent=`checking ${refs.length}…`;
+  const m = mode()==='dry'?'dry':(mode()==='write'?'write':'live');
+  const r = await (await fetch('/api/check',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({refs, mode:m})})).json();
+  (r.results||[]).forEach(x=>log(`— check ${x.ref}:\n${x.out.trim()}`));
+  $('#statusMsg').textContent='checked'; refreshStatus();
+}
+let autoTimer=null;
+function toggleAuto(cb){ if(cb.checked){ autoTimer=setInterval(pollReplies,10000); pollReplies(); } else clearInterval(autoTimer); }
+
+async function refreshStatus(){
+  try{
+    const rows = await (await fetch('/api/tracking')).json();
+    $('#status').innerHTML = rows.length ? rows.map(r=>`
+      <tr><td class="mono">${r.ref}</td>
+        <td><span class="badge b-${r.stage}">${r.rawStage||r.stage}</span></td>
+        <td class="mono">${r.phone}</td><td>${r.reply||'<span class=pending>—</span>'}</td>
+        <td>${r.eta||'<span class=pending>—</span>'}</td><td class="mut">${r.note||''}</td></tr>`).join('')
+      : '<tr><td colspan="6" class="pending">No activity yet.</td></tr>';
+  }catch(e){}
+}
+function tick(){ $('#clock').textContent=new Date().toLocaleTimeString(); }
+refreshStatus(); tick(); setInterval(refreshStatus,5000); setInterval(tick,1000);
+</script>
+</body>
+</html>

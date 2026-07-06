@@ -9,7 +9,7 @@
 const cfg = require('./config');
 const db = require('./db');
 const hubspot = require('./hubspot');
-const { resolvePhone } = require('./phone');
+const { resolvePhone, isAllowedRecipient } = require('./phone');
 const tracking = require('./tracking');
 const { STAGE } = tracking;
 
@@ -56,6 +56,12 @@ exports.handler = async () => {
         await tracking.upsert(ref, { stage: STAGE.SKIPPED, note: 'no valid mobile', carrierId: load.carrier_id });
         results.skipped.push(ref);
         console.warn(`[WA Monitor] ${ref} — no valid mobile, skipped`);
+        continue;
+      }
+      if (!isAllowedRecipient(chosen.phone, cfg.ALLOWED_PHONES)) {
+        await tracking.upsert(ref, { stage: STAGE.SKIPPED, note: 'recipient not in allowlist' });
+        results.skipped.push(ref);
+        console.warn(`[WA Monitor] ${ref} — ${chosen.phone} not in WA_ALLOWED_PHONES, skipped`);
         continue;
       }
 
