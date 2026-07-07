@@ -25,6 +25,8 @@ DB_HOST=dev-ofload-db-dbcluster-apbpjssrmca2.cluster-cnxvdokgi8pl.ap-southeast-2
 DB_SUBNETS=subnet-0ba70208ee7d7272d,subnet-0d4667dcf29361928,subnet-0888bce647c3bab1d
 DB_SG=sg-0d208520263786cea          # ⚠️ assumes this SG allows Lambda→DB on 5432 (verify; may need an ingress rule)
 SSM_DB_PW=/ofload/db/masterpassword
+TAGS_MAP="project=wa-pickup-poc,owner=josh.lemura"                       # lambda map form
+TAGS_KV="Key=project,Value=wa-pickup-poc Key=owner,Value=josh.lemura"    # iam/dynamodb/events form
 
 # ── safety defaults for the deployed functions (widen later) ──
 : "${WA_ALLOWED_PHONES:=+61409766714}"
@@ -44,13 +46,15 @@ echo "== 2. DynamoDB table =="
 aws dynamodb describe-table --table-name "$TABLE" --region "$REGION" >/dev/null 2>&1 || \
 aws dynamodb create-table --table-name "$TABLE" --region "$REGION" \
   --attribute-definitions AttributeName=reference,AttributeType=S \
-  --key-schema AttributeName=reference,KeyType=HASH --billing-mode PAY_PER_REQUEST >/dev/null
+  --key-schema AttributeName=reference,KeyType=HASH --billing-mode PAY_PER_REQUEST \
+  --tags $TAGS_KV >/dev/null
 echo "   $TABLE ready"
 
 echo "== 3. IAM role =="
 if ! aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
   aws iam create-role --role-name "$ROLE" --assume-role-policy-document \
-    '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
+    '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+    --tags $TAGS_KV >/dev/null
 fi
 aws iam attach-role-policy --role-name "$ROLE" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole >/dev/null || true
 aws iam attach-role-policy --role-name "$ROLE" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole >/dev/null || true
@@ -81,8 +85,9 @@ upsert_fn() { # name handler extra-env vpc?
   else
     aws lambda create-function --function-name "$NAME" --runtime nodejs20.x --role "$ROLE_ARN" \
       --handler "$HANDLER" --zip-file "fileb://$ZIP" --timeout 120 --memory-size 256 \
-      --environment "$ENVV" $VPC --region "$REGION" >/dev/null
+      --environment "$ENVV" $VPC --tags "$TAGS_MAP" --region "$REGION" >/dev/null
   fi
+  aws lambda tag-resource --resource "arn:aws:lambda:${REGION}:${ACCT}:function:${NAME}" --tags "$TAGS_MAP" --region "$REGION" >/dev/null 2>&1 || true
   echo "   $NAME deployed"
 }
 
@@ -100,7 +105,7 @@ XENV="DATABASE_URL=${DATABASE_URL},WA_PHASE=${WA_PHASE},WA_ENABLED_LOADS=${WA_EN
 upsert_fn "$FN_CRON" pickupMonitor.handler "$XENV" "$VPC_CFG"
 
 echo "== 6. EventBridge rule (DISABLED — manual only) =="
-aws events put-rule --name wa-pickup-schedule --schedule-expression "rate(5 minutes)" --state DISABLED --region "$REGION" >/dev/null
+aws events put-rule --name wa-pickup-schedule --schedule-expression "rate(5 minutes)" --state DISABLED --tags $TAGS_KV --region "$REGION" >/dev/null
 aws lambda add-permission --function-name "$FN_CRON" --statement-id ebridge --action lambda:InvokeFunction \
   --principal events.amazonaws.com --source-arn "arn:aws:events:${REGION}:${ACCT}:rule/wa-pickup-schedule" --region "$REGION" >/dev/null 2>&1 || true
 aws events put-targets --rule wa-pickup-schedule --region "$REGION" \
