@@ -120,11 +120,13 @@ async function lookupRef(){
   try{
     const r = await (await fetch('/api/lookup?ref='+encodeURIComponent(ref))).json();
     if(r.error){ $('#candMsg').textContent='error: '+r.error; return; }
-    if(!r.candidates || !r.candidates.length){ $('#candMsg').textContent=`no load found for "${ref}"`; return; }
-    const c = r.candidates[0];
-    candidates = [c, ...candidates.filter(x=>x.ref!==c.ref)];   // prepend / de-dupe
-    $('#search').value = c.ref; applyFilter();
-    $('#candMsg').textContent = c.eligible ? `${c.ref} found — eligible` : `${c.ref} found — NOT eligible (${c.onTheRoad?'already On The Road':'no Allocated milestone'})`;
+    const found = r.candidates||[];
+    if(!found.length){ $('#candMsg').textContent=`no load found for "${ref}" — try a shipment ref (AUST…/AUSH…) or master-manifest ref (AUMM…)`; return; }
+    const refs = new Set(found.map(x=>x.ref));
+    candidates = [...found, ...candidates.filter(x=>!refs.has(x.ref))];   // prepend found, de-dupe
+    $('#search').value=''; applyFilter();
+    const elig = found.filter(x=>x.eligible).length;
+    $('#candMsg').textContent = `found ${found.length} load(s) for "${ref}" · ${elig} eligible — shown at top`;
   }catch(e){ $('#candMsg').textContent='failed: '+e.message; }
 }
 function toggleAll(cb){ document.querySelectorAll('.csel:not(:disabled)').forEach(x=>x.checked=cb.checked); syncSend(); }
