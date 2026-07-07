@@ -45,10 +45,37 @@ async function all() {
   return Object.values(readLocal());
 }
 
-// ── dynamo backend (prod) — TODO wire with @aws-sdk/client-dynamodb ──
-async function upsertDynamo() { throw new Error('tracking: dynamo backend not wired yet'); }
-async function getDynamo()    { throw new Error('tracking: dynamo backend not wired yet'); }
-async function allDynamo()    { throw new Error('tracking: dynamo backend not wired yet'); }
+// ── dynamo backend (prod / Lambda) ─────────────────────
+// Table: cfg.TRACKING_TABLE, partition key: reference (String). @aws-sdk is in the Lambda runtime.
+let _doc = null;
+function doc() {
+  if (!_doc) {
+    const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+    const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
+    _doc = DynamoDBDocumentClient.from(new DynamoDBClient({ region: cfg.AWS_REGION }));
+  }
+  return _doc;
+}
+async function getDynamo(reference) {
+  const { GetCommand } = require('@aws-sdk/lib-dynamodb');
+  const r = await doc().send(new GetCommand({ TableName: cfg.TRACKING_TABLE, Key: { reference } }));
+  return r.Item || null;
+}
+async function upsertDynamo(reference, patch = {}) {
+  const prev = (await getDynamo(reference)) || { reference, events: [] };
+  const next = { ...prev, ...patch, reference, updatedAt: nowIso() };
+  if (patch.stage && patch.stage !== prev.stage) {
+    next.events = [...(prev.events || []), { stage: patch.stage, at: nowIso(), note: patch.note || null }];
+  }
+  const { PutCommand } = require('@aws-sdk/lib-dynamodb');
+  await doc().send(new PutCommand({ TableName: cfg.TRACKING_TABLE, Item: next }));
+  return next;
+}
+async function allDynamo() {
+  const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+  const r = await doc().send(new ScanCommand({ TableName: cfg.TRACKING_TABLE }));
+  return r.Items || [];
+}
 
 // Stage constants (the state machine)
 const STAGE = {
