@@ -62,6 +62,17 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  if (url.startsWith('/api/lookup')) {   // search a specific load ref in dev
+    const ref = (new URL(req.url, 'http://x').searchParams.get('ref') || '').trim().toUpperCase();
+    if (!ref) return json(res, { candidates: [] });
+    return run('validate-carrier.sh', ['LOOKUP:' + ref], {}, r => {
+      const line = r.out.split('\n').find(l => l.startsWith('__CANDIDATES__'));
+      if (!line) return json(res, { error: 'lookup failed', log: r.out.slice(-800) }, 500);
+      try { return json(res, { candidates: JSON.parse(line.replace('__CANDIDATES__', '')) }); }
+      catch (e) { return json(res, { error: e.message, log: r.out.slice(-800) }, 500); }
+    });
+  }
+
   if (url === '/api/send' && req.method === 'POST') {
     const { refs = [], mode = 'dry', allowedPhones = '' } = await body(req);
     const env = { WA_ALLOWED_PHONES: allowedPhones };

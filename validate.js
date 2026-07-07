@@ -85,6 +85,38 @@ const show = c => c ? `${c.phone} (${c.reason}${c.name ? ', ' + c.name : ''})` :
     await pool.end(); return;
   }
 
+  // LOOKUP:<ref> — resolve a single specific load (any state) for the panel search
+  if (name.startsWith('LOOKUP:')) {
+    const ref = name.slice('LOOKUP:'.length).trim();
+    const { rows: [r] } = await pool.query(
+      `SELECT s.reference, mf.id AS manifest_id, mm.id AS master_manifest_id,
+              mm.carrier_id, co.company_name, mm.team_id,
+              (t.first_name||' '||t.last_name) AS assignee, t.position, t.phone,
+              EXISTS(SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='Allocated'   AND m.deleted_at IS NULL) AS allocated,
+              EXISTS(SELECT 1 FROM shipment_milestones m WHERE m.shipment_id=s.id AND m.type='On The Road' AND m.deleted_at IS NULL) AS on_the_road,
+              (SELECT (pickup_at + COALESCE(pick_from,'00:00:00+00'::timetz)) FROM cargo WHERE cargo.shipment_id=s.id AND pickup_at IS NOT NULL ORDER BY pickup_at LIMIT 1) AS scheduled_pickup
+         FROM shipment s
+         JOIN LATERAL (SELECT id, master_man_id FROM manifest WHERE shipment_id=s.id AND deleted_at IS NULL ORDER BY id DESC LIMIT 1) mf ON true
+         JOIN master_manifest mm ON mm.id = mf.master_man_id
+         JOIN carrier c  ON c.id = mm.carrier_id
+         JOIN company co ON co.id = c.company_id
+         LEFT JOIN team t ON t.id = mm.team_id
+        WHERE s.reference = $1 AND s.deleted_at IS NULL LIMIT 1`, [ref]);
+    if (!r) { console.log('__CANDIDATES__[]'); await pool.end(); return; }
+    const contacts = (await pool.query(
+      `SELECT (first_name||' '||last_name) AS name, position, phone, is_primary AS "isPrimary"
+         FROM team WHERE company_id = (SELECT company_id FROM carrier WHERE id=$1) AND deleted_at IS NULL AND NULLIF(phone,'') IS NOT NULL`, [r.carrier_id])).rows;
+    const chosen = resolvePhone({ assigned: r.team_id ? { name: r.assignee, position: r.position, phone: r.phone } : null, contacts });
+    console.log('__CANDIDATES__' + JSON.stringify([{
+      ref: r.reference, carrier: r.company_name, assignee: r.assignee || null, position: r.position || null,
+      phone: chosen ? chosen.phone : null, phoneReason: chosen ? chosen.reason : 'none',
+      teamId: r.team_id, manifestId: r.manifest_id, masterManifestId: r.master_manifest_id, carrierId: r.carrier_id,
+      scheduledPickup: r.scheduled_pickup, allocated: r.allocated, onTheRoad: r.on_the_road,
+      eligible: r.allocated && !r.on_the_road,
+    }]));
+    await pool.end(); return;
+  }
+
   // CANDIDATES-JSON — machine-readable candidate loads for the control panel (resolved phone incl.)
   if (name.trim() === 'CANDIDATES-JSON') {
     const { rows } = await pool.query(

@@ -46,6 +46,9 @@
   <div class="shead">
     <h2>Candidate orders (dev)</h2>
     <button onclick="loadCandidates()">↻ Load candidates</button>
+    <input id="search" type="text" placeholder="filter loaded list (ref or carrier)…" oninput="applyFilter()" style="min-width:220px"/>
+    <input id="lookupRef" type="text" placeholder="exact load ref…" style="min-width:150px"/>
+    <button onclick="lookupRef()">🔍 Look up in dev</button>
     <button class="primary" onclick="sendSelected()" id="sendBtn" disabled>Send selected →</button>
     <span class="mut" id="candMsg"></span>
   </div>
@@ -84,27 +87,48 @@ const MODEBAR = {
 };
 document.querySelectorAll('input[name=mode]').forEach(r=>r.onchange=()=>{ $('#modebar').textContent = MODEBAR[mode()]; });
 
+function renderCandidates(list){
+  $('#cands').innerHTML = list.length ? list.map(c=>`
+    <tr>
+      <td><input type="checkbox" class="csel" data-ref="${c.ref}" ${c.phone?'':'disabled'} onchange="syncSend()"></td>
+      <td class="mono">${c.ref}${c.onTheRoad?' <span class="mut">(on road)</span>':''}</td><td>${c.carrier||'—'}</td>
+      <td>${c.assignee||'—'}${c.position?` <span class="mut">(${c.position})</span>`:''}</td>
+      <td class="mono">${c.phone||'<span class="pending">no valid mobile</span>'}</td>
+      <td class="mut">${c.phoneReason||''}</td>
+      <td class="mut">${c.scheduledPickup?new Date(c.scheduledPickup).toLocaleString():'—'}</td>
+    </tr>`).join('') : '<tr><td colspan="7" class="pending">Nothing to show.</td></tr>';
+  syncSend();
+}
+function applyFilter(){
+  const q = $('#search').value.trim().toLowerCase();
+  renderCandidates(!q ? candidates : candidates.filter(c =>
+    (c.ref||'').toLowerCase().includes(q) || (c.carrier||'').toLowerCase().includes(q)));
+}
 async function loadCandidates(){
   $('#candMsg').textContent = 'loading… (opens a read-only tunnel, ~5s)';
   try{
     const r = await (await fetch('/api/candidates')).json();
     if(r.error){ $('#candMsg').textContent = 'error: '+r.error; log(r.log||r.error); return; }
     candidates = r.candidates||[];
-    $('#cands').innerHTML = candidates.length ? candidates.map((c,i)=>`
-      <tr>
-        <td><input type="checkbox" class="csel" data-i="${i}" ${c.phone?'':'disabled'} onchange="syncSend()"></td>
-        <td class="mono">${c.ref}</td><td>${c.carrier||'—'}</td>
-        <td>${c.assignee||'—'}${c.position?` <span class="mut">(${c.position})</span>`:''}</td>
-        <td class="mono">${c.phone||'<span class="pending">no valid mobile</span>'}</td>
-        <td class="mut">${c.phoneReason||''}</td>
-        <td class="mut">${c.scheduledPickup?new Date(c.scheduledPickup).toLocaleString():'—'}</td>
-      </tr>`).join('') : '<tr><td colspan="7" class="pending">No eligible candidates.</td></tr>';
+    applyFilter();
     $('#candMsg').textContent = `${candidates.length} candidate(s)`;
-    syncSend();
+  }catch(e){ $('#candMsg').textContent='failed: '+e.message; }
+}
+async function lookupRef(){
+  const ref = $('#lookupRef').value.trim(); if(!ref) return;
+  $('#candMsg').textContent = `looking up ${ref}… (~5s)`;
+  try{
+    const r = await (await fetch('/api/lookup?ref='+encodeURIComponent(ref))).json();
+    if(r.error){ $('#candMsg').textContent='error: '+r.error; return; }
+    if(!r.candidates || !r.candidates.length){ $('#candMsg').textContent=`no load found for "${ref}"`; return; }
+    const c = r.candidates[0];
+    candidates = [c, ...candidates.filter(x=>x.ref!==c.ref)];   // prepend / de-dupe
+    $('#search').value = c.ref; applyFilter();
+    $('#candMsg').textContent = c.eligible ? `${c.ref} found — eligible` : `${c.ref} found — NOT eligible (${c.onTheRoad?'already On The Road':'no Allocated milestone'})`;
   }catch(e){ $('#candMsg').textContent='failed: '+e.message; }
 }
 function toggleAll(cb){ document.querySelectorAll('.csel:not(:disabled)').forEach(x=>x.checked=cb.checked); syncSend(); }
-function selectedRefs(){ return [...document.querySelectorAll('.csel:checked')].map(x=>candidates[+x.dataset.i].ref); }
+function selectedRefs(){ return [...document.querySelectorAll('.csel:checked')].map(x=>x.dataset.ref); }
 function syncSend(){ $('#sendBtn').disabled = selectedRefs().length===0; }
 
 async function sendSelected(){
